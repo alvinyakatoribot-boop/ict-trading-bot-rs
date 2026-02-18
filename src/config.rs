@@ -66,6 +66,10 @@ pub struct Config {
     pub max_daily_loss: f64,
     pub max_open_positions: usize,
 
+    // Fees & Slippage (as fraction, e.g., 0.001 = 0.1%)
+    pub fee_rate: f64,
+    pub slippage_rate: f64,
+
     // Sessions (stored as minute offsets from midnight ET)
     pub sessions: HashMap<String, SessionTime>,
     pub session_weights: HashMap<String, f64>,
@@ -246,6 +250,8 @@ impl Config {
                 .unwrap_or(200.0),
             max_daily_loss: 0.03,
             max_open_positions: 3,
+            fee_rate: env("FEE_RATE", "0.001").parse().unwrap_or(0.001),         // 0.1% per trade
+            slippage_rate: env("SLIPPAGE_RATE", "0.0005").parse().unwrap_or(0.0005), // 0.05% per trade
             sessions,
             session_weights,
             hft_scales,

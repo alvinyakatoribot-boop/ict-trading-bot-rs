@@ -357,6 +357,18 @@ impl BacktestRunner {
             return;
         }
 
+        // Minimum TP distance filter: ensure expected profit > round-trip fees
+        let tp_dist_pct = (signal.take_profit - signal.entry_price).abs() / signal.entry_price;
+        let round_trip_fee = (self.config.fee_rate + self.config.slippage_rate) * 2.0;
+        let min_tp_multiple: f64 = std::env::var("MIN_TP_MULTIPLE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3.0);
+        if tp_dist_pct < round_trip_fee * min_tp_multiple {
+            self.signals_filtered += 1;
+            return;
+        }
+
         // Build metadata
         let pda = &signal.pda_engaged;
         let metadata = TradeMetadata {

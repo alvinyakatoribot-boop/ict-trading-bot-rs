@@ -213,6 +213,8 @@ pub fn default_test_config() -> Config {
         initial_balance: 200.0,
         max_daily_loss: 0.03,
         max_open_positions: 3,
+        fee_rate: 0.0,
+        slippage_rate: 0.0,
         sessions,
         session_weights,
         hft_scales,

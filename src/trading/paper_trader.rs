@@ -89,6 +89,10 @@ pub struct PaperTrader {
     records_file: String,
     /// When set, used instead of Utc::now() for timestamps (backtesting)
     pub sim_time: Option<DateTime<Utc>>,
+    /// Trading fees as fraction (e.g., 0.001 = 0.1%)
+    fee_rate: f64,
+    /// Slippage as fraction (e.g., 0.0005 = 0.05%)
+    slippage_rate: f64,
 }
 
 impl PaperTrader {
@@ -106,6 +110,8 @@ impl PaperTrader {
             trades_file: format!("{}/paper_trades.json", cfg.log_dir),
             records_file: format!("{}/trade_records.json", cfg.log_dir),
             sim_time: None,
+            fee_rate: cfg.fee_rate,
+            slippage_rate: cfg.slippage_rate,
         };
         trader.load_state(cfg);
         trader
@@ -126,6 +132,8 @@ impl PaperTrader {
             trades_file: String::new(),
             records_file: String::new(),
             sim_time: None,
+            fee_rate: cfg.fee_rate,
+            slippage_rate: cfg.slippage_rate,
         }
     }
 
@@ -194,6 +202,17 @@ impl PaperTrader {
             size_btc = size_usd / signal.entry_price;
         }
 
+        // Apply entry fee + slippage
+        let entry_fee = size_usd * self.fee_rate;
+        let slippage_cost = size_usd * self.slippage_rate;
+        self.balance -= entry_fee + slippage_cost;
+
+        // Adjust entry price for slippage (adverse direction)
+        let entry_price = match signal.direction {
+            Direction::Long => signal.entry_price * (1.0 + self.slippage_rate),
+            Direction::Short => signal.entry_price * (1.0 - self.slippage_rate),
+        };
+
         self.trade_counter += 1;
         let id = self.trade_counter;
 
@@ -222,7 +241,7 @@ impl PaperTrader {
         let pos = Position {
             id,
             direction: signal.direction,
-            entry_price: signal.entry_price,
+            entry_price,
             size_usd: round2(size_usd),
             size_btc: round8(size_btc),
             stop_loss: signal.stop_loss,
@@ -345,6 +364,7 @@ impl PaperTrader {
 
     fn partial_close(&mut self, pos_idx: usize, target_idx: usize, exit_price: f64) {
         let now_str = self.now().to_rfc3339();
+        let fee_rate = self.fee_rate;
         let pos = &mut self.positions[pos_idx];
         let close_size = pos.tp_targets[target_idx]
             .size_btc
@@ -357,7 +377,9 @@ impl PaperTrader {
             Direction::Long => (exit_price - pos.entry_price) * close_size,
             Direction::Short => (pos.entry_price - exit_price) * close_size,
         };
-        let pnl = round2(pnl);
+        // Deduct exit fee
+        let exit_fee = close_size * exit_price * fee_rate;
+        let pnl = round2(pnl - exit_fee);
 
         pos.remaining_size_btc = round8(pos.remaining_size_btc - close_size);
         pos.pnl = round2(pos.pnl + pnl);
@@ -390,6 +412,7 @@ impl PaperTrader {
 
     fn close_position(&mut self, pos_idx: usize, exit_price: f64, status: PositionStatus) {
         let now_str = self.now().to_rfc3339();
+        let fee_rate = self.fee_rate;
         let pos = &mut self.positions[pos_idx];
         let close_size = if pos.remaining_size_btc > 0.0 {
             pos.remaining_size_btc
@@ -401,6 +424,9 @@ impl PaperTrader {
             Direction::Long => (exit_price - pos.entry_price) * close_size,
             Direction::Short => (pos.entry_price - exit_price) * close_size,
         };
+        // Deduct exit fee
+        let exit_fee = close_size * exit_price * fee_rate;
+        let pnl = pnl - exit_fee;
 
         pos.exit_price = Some(exit_price);
         pos.exit_time = Some(now_str);
