@@ -219,13 +219,13 @@ impl BacktestRunner {
     }
 
     async fn check_positions(&mut self, sim_time: DateTime<Utc>) {
-        let open_pos: Vec<(usize, Direction, f64)> = self
+        let open_pos: Vec<(usize, Direction, f64, String)> = self
             .paper_trader
             .positions
             .iter()
             .enumerate()
             .filter(|(_, p)| p.status == PositionStatus::Open)
-            .map(|(i, p)| (i, p.direction, p.stop_loss))
+            .map(|(i, p)| (i, p.direction, p.stop_loss, p.scale.clone()))
             .collect();
 
         if open_pos.is_empty() {
@@ -237,9 +237,26 @@ impl BacktestRunner {
             Err(_) => return,
         };
 
-        // Trail stops
-        for &(_, direction, stop_loss) in &open_pos {
-            if let Some(trail_df) = self.data_cache.get(&Timeframe::M5) {
+        // Trail stops using scale-appropriate timeframe
+        let trail_tf_env = std::env::var("TRAIL_TF").unwrap_or_default();
+        for &(_, direction, stop_loss, ref scale) in &open_pos {
+            // Use scale's entry TF for trailing, or override via env
+            let trail_tf = if !trail_tf_env.is_empty() {
+                match trail_tf_env.as_str() {
+                    "1m" => Timeframe::M1,
+                    "5m" => Timeframe::M5,
+                    "15m" => Timeframe::M15,
+                    _ => Timeframe::M5,
+                }
+            } else {
+                match scale.as_str() {
+                    "1m" => Timeframe::M1,
+                    "5m" => Timeframe::M5,
+                    "15m" => Timeframe::M15,
+                    _ => Timeframe::M5,
+                }
+            };
+            if let Some(trail_df) = self.data_cache.get(&trail_tf) {
                 let mut trail_engine = StopLossEngine::new();
                 if let Some(new_sl) =
                     trail_engine.get_trailing_stop(direction, stop_loss, trail_df, None)
