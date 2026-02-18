@@ -130,8 +130,17 @@ impl BacktestRunner {
             // Check positions
             self.check_positions(current).await;
 
-            // Scan all scales
-            let scale_keys: Vec<String> = self.config.hft_scales.keys().cloned().collect();
+            // Scan all scales (optionally skip some via SKIP_SCALES env, comma-separated)
+            let skip_scales: Vec<String> = std::env::var("SKIP_SCALES")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let scale_keys: Vec<String> = self.config.hft_scales.keys()
+                .filter(|k| !skip_scales.contains(k))
+                .cloned()
+                .collect();
             for scale_key in &scale_keys {
                 self.scan_scale(scale_key, current).await;
             }
