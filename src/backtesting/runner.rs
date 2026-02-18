@@ -396,7 +396,7 @@ impl BacktestRunner {
         let min_tp_multiple: f64 = std::env::var("MIN_TP_MULTIPLE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(3.0);
+            .unwrap_or(6.0);
         if tp_dist_pct < round_trip_fee * min_tp_multiple {
             self.signals_filtered += 1;
             return;
