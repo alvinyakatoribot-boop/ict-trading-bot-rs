@@ -173,7 +173,10 @@ impl StdDevProjector {
             return (candles.highs_max(), candles.lows_min());
         }
 
-        let recent = candles.tail(50.min(candles.len()));
+        // Use larger lookback for better manipulation leg detection
+        // ~2-4 hours worth of candles regardless of timeframe
+        let lookback = 80.min(candles.len());
+        let recent = candles.tail(lookback);
 
         match direction {
             Trend::Bullish => {
