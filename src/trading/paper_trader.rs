@@ -10,12 +10,20 @@ use crate::models::{Direction, PositionStatus};
 use crate::strategies::signals::TradeSignal;
 use crate::trading::trade_record::{TradeMetadata, TradeRecord};
 
-/// Partial TP allocation
-const TP_ALLOCATIONS: &[(f64, f64)] = &[
-    (-1.0, 0.50),
-    (-2.0, 0.1667),
-    (-4.0, 0.1667),
-    (-4.5, 0.1666),
+/// Partial TP allocation — conservative (non-CISD)
+const TP_ALLOC_CONSERVATIVE: &[(f64, f64)] = &[
+    (-1.0, 0.60),
+    (-2.0, 0.20),
+    (-4.0, 0.10),
+    (-4.5, 0.10),
+];
+
+/// Partial TP allocation — aggressive (CISD confirmed, let runners run)
+const TP_ALLOC_AGGRESSIVE: &[(f64, f64)] = &[
+    (-1.0, 0.30),
+    (-2.0, 0.20),
+    (-4.0, 0.25),
+    (-4.5, 0.25),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,7 +224,12 @@ impl PaperTrader {
         self.trade_counter += 1;
         let id = self.trade_counter;
 
-        // Build TP targets from SD levels
+        // Build TP targets from SD levels — dynamic allocation based on CISD
+        let tp_alloc = if signal.cisd_confirmed {
+            TP_ALLOC_AGGRESSIVE
+        } else {
+            TP_ALLOC_CONSERVATIVE
+        };
         let mut tp_targets = Vec::new();
         if let Some(ref tp_levels) = signal.tp_levels {
             let tp_map: HashMap<i64, f64> = tp_levels
@@ -224,7 +237,7 @@ impl PaperTrader {
                 .filter_map(|l| l.level.map(|lv| ((lv * 10.0) as i64, l.price)))
                 .collect();
 
-            for &(level, pct) in TP_ALLOCATIONS {
+            for &(level, pct) in tp_alloc {
                 let key = (level * 10.0) as i64;
                 if let Some(&price) = tp_map.get(&key) {
                     tp_targets.push(TpTarget {
