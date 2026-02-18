@@ -36,7 +36,11 @@ pub struct StopLossEngine {
 
 impl StopLossEngine {
     pub fn new() -> Self {
-        Self::with_lookback(2)
+        let lb: usize = std::env::var("SWING_LOOKBACK")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        Self::with_lookback(lb)
     }
 
     pub fn with_lookback(lookback: usize) -> Self {
