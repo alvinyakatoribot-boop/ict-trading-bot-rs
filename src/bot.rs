@@ -323,6 +323,23 @@ impl IctBot {
             return;
         }
 
+        // Minimum TP distance filter: ensure expected profit > round-trip fees
+        let tp_dist_pct = (signal.take_profit - signal.entry_price).abs() / signal.entry_price;
+        let round_trip_fee = (cfg.fee_rate + cfg.slippage_rate) * 2.0;
+        let min_tp_multiple: f64 = std::env::var("MIN_TP_MULTIPLE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3.0);
+        if tp_dist_pct < round_trip_fee * min_tp_multiple {
+            debug!(
+                "Skipping {} signal: TP dist {:.4}% < min {:.4}%",
+                scale_key,
+                tp_dist_pct * 100.0,
+                round_trip_fee * min_tp_multiple * 100.0
+            );
+            return;
+        }
+
         // Log the signal
         info!("{}", "=".repeat(60));
         info!("HFT SIGNAL — {}", signal.scale_name);
