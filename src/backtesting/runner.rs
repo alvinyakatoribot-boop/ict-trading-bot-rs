@@ -274,8 +274,11 @@ impl BacktestRunner {
                 .collect();
             for key in keys_to_remove {
                 self.scale_positions.remove(&key);
-                // 30-minute cooldown after position closes to prevent churning
-                self.scale_cooldown.insert(key, sim_time + ChronoDuration::minutes(30));
+                let cooldown_mins: i64 = std::env::var("COOLDOWN_MINUTES")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30);
+                self.scale_cooldown.insert(key, sim_time + ChronoDuration::minutes(cooldown_mins));
             }
         }
     }
