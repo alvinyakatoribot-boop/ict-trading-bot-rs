@@ -136,6 +136,41 @@ impl HftScale {
             }
         };
 
+        // Exhaustion filter (TTrades Article 5): skip if 3+ consecutive
+        // same-direction expansion candles on entry TF (move is spent)
+        let exhaust_count: usize = std::env::var("EXHAUST_CANDLES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0); // 0 = disabled
+        if exhaust_count > 0 && entry_df.len() >= exhaust_count {
+            let recent = entry_df.tail(exhaust_count);
+            let all_same_dir = match aligned_direction {
+                Trend::Bullish => recent.iter().all(|c| c.is_bullish() && c.close > c.open),
+                Trend::Bearish => recent.iter().all(|c| c.is_bearish() && c.close < c.open),
+                _ => false,
+            };
+            if all_same_dir {
+                // Check if each candle expands beyond the previous (true expansion)
+                let mut expanding = true;
+                for i in 1..recent.len() {
+                    let prev_c = &recent[i - 1];
+                    let curr_c = &recent[i];
+                    let expands = match aligned_direction {
+                        Trend::Bullish => curr_c.close > prev_c.close,
+                        Trend::Bearish => curr_c.close < prev_c.close,
+                        _ => false,
+                    };
+                    if !expands {
+                        expanding = false;
+                        break;
+                    }
+                }
+                if expanding {
+                    return None; // Move is exhausted, skip
+                }
+            }
+        }
+
         // Step 2: Structure TF PDAs + Dealing Range
         self.structure_analyzer.analyze(struct_df);
         let dr = self.structure_analyzer.get_dealing_range(Some(struct_df));
