@@ -176,11 +176,15 @@ impl BacktestRunner {
     }
 
     async fn refresh_data(&mut self) {
+        let lookback: usize = std::env::var("DATA_LOOKBACK")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(200);
         let timeframes = [
-            (Timeframe::M1, 200usize),
-            (Timeframe::M5, 200),
-            (Timeframe::M15, 200),
-            (Timeframe::H1, 200),
+            (Timeframe::M1, lookback),
+            (Timeframe::M5, lookback),
+            (Timeframe::M15, lookback),
+            (Timeframe::H1, lookback),
             (Timeframe::D1, 30),
         ];
 
