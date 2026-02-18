@@ -58,6 +58,8 @@ pub struct Position {
     pub entry_time: String,
     pub reason: String,
     #[serde(default)]
+    pub scale: String,
+    #[serde(default)]
     pub kelly_fraction: f64,
     pub status: PositionStatus,
     #[serde(default)]
@@ -261,6 +263,7 @@ impl PaperTrader {
             take_profit: signal.take_profit,
             entry_time: self.now().to_rfc3339(),
             reason: signal.reason.clone(),
+            scale: scale.to_string(),
             kelly_fraction: kelly_result.applied_fraction,
             status: PositionStatus::Open,
             exit_price: None,

@@ -36,7 +36,7 @@ pub struct StopLossEngine {
 
 impl StopLossEngine {
     pub fn new() -> Self {
-        Self::with_lookback(5)
+        Self::with_lookback(3)
     }
 
     pub fn with_lookback(lookback: usize) -> Self {
