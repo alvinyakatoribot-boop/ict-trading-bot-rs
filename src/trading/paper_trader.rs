@@ -20,10 +20,10 @@ const TP_ALLOC_CONSERVATIVE: &[(f64, f64)] = &[
 
 /// Partial TP allocation — aggressive (CISD confirmed, let runners run)
 const TP_ALLOC_AGGRESSIVE: &[(f64, f64)] = &[
-    (-1.0, 0.30),
-    (-2.0, 0.20),
-    (-4.0, 0.25),
-    (-4.5, 0.25),
+    (-1.0, 0.10),
+    (-2.0, 0.15),
+    (-4.0, 0.30),
+    (-4.5, 0.45),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +408,7 @@ impl PaperTrader {
             time: now_str,
             logged: false,
         });
+
     }
 
     fn finalize_position(&mut self, pos_idx: usize, status: PositionStatus) {
