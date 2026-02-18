@@ -125,7 +125,13 @@ impl HftScale {
         }
 
         // Step 1: Alignment gate
-        let aligned_direction = self.check_alignment(data)?;
+        let aligned_direction = match self.check_alignment(data) {
+            Some(d) => d,
+            None => {
+                tracing::trace!("[EVAL] {} blocked at alignment", self.name);
+                return None;
+            }
+        };
 
         // Step 2: Structure TF PDAs + Dealing Range
         self.structure_analyzer.analyze(struct_df);
@@ -145,12 +151,18 @@ impl HftScale {
 
         // Step 3: Judas swing detection
         if !self.detect_judas_swing(entry_df, aligned_direction, reference_price, &dr) {
+            tracing::debug!("[EVAL] {} passed alignment ({:?}) but blocked at Judas swing", self.name, aligned_direction);
             return None;
         }
 
         // Step 4: PDA engagement
-        let engaged_pda =
-            self.check_pda_engagement(entry_df, &structure_pdas, aligned_direction)?;
+        let engaged_pda = match self.check_pda_engagement(entry_df, &structure_pdas, aligned_direction) {
+            Some(p) => p,
+            None => {
+                tracing::debug!("[EVAL] {} passed Judas swing but blocked at PDA engagement", self.name);
+                return None;
+            }
+        };
 
         // Step 5: CISD confirmation
         let struct_breakers: Vec<&Pda> = structure_pdas
@@ -251,7 +263,8 @@ impl HftScale {
             return false;
         }
 
-        let recent = entry_df.tail(20);
+        // Use wider lookback window for better Judas swing detection
+        let recent = entry_df.tail(60);
         let current = match recent.last() {
             Some(c) => c.close,
             None => return false,
@@ -259,14 +272,24 @@ impl HftScale {
 
         match direction {
             Trend::Bullish => {
+                // Classic Judas: swept below pivot and reclaimed
                 let went_below = recent.any_low_below(pivot);
                 let came_back = current > pivot;
-                went_below && came_back
+                if went_below && came_back {
+                    return true;
+                }
+                // Fallback: price is in discount zone of dealing range (below equilibrium)
+                // and showing reversal — this is a valid ICT setup
+                current < dr.equilibrium && current > dr.low
             }
             Trend::Bearish => {
                 let went_above = recent.any_high_above(pivot);
                 let came_back = current < pivot;
-                went_above && came_back
+                if went_above && came_back {
+                    return true;
+                }
+                // Fallback: price is in premium zone (above equilibrium) and showing reversal
+                current > dr.equilibrium && current < dr.high
             }
             Trend::Neutral => false,
         }
@@ -286,7 +309,8 @@ impl HftScale {
         let recent_low = recent.lows_min();
         let recent_high = recent.highs_max();
 
-        let candidates: Vec<&Pda> = match direction {
+        // First try strict zone matching (discount for bullish, premium for bearish)
+        let strict_candidates: Vec<&Pda> = match direction {
             Trend::Bullish => structure_pdas
                 .iter()
                 .filter(|p| p.direction == Trend::Bullish && p.zone == Zone::Discount)
@@ -299,6 +323,25 @@ impl HftScale {
                 .iter()
                 .filter(|p| p.strength > 0.4)
                 .collect(),
+        };
+        // Fallback: accept PDAs matching direction in any zone
+        let candidates: Vec<&Pda> = if strict_candidates.is_empty() {
+            match direction {
+                Trend::Bullish => structure_pdas
+                    .iter()
+                    .filter(|p| p.direction == Trend::Bullish)
+                    .collect(),
+                Trend::Bearish => structure_pdas
+                    .iter()
+                    .filter(|p| p.direction == Trend::Bearish)
+                    .collect(),
+                Trend::Neutral => structure_pdas
+                    .iter()
+                    .filter(|p| p.strength > 0.3)
+                    .collect(),
+            }
+        } else {
+            strict_candidates
         };
 
         let mut sorted = candidates;

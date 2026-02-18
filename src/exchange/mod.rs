@@ -1,6 +1,8 @@
 pub mod coinbase;
+pub mod historical;
 
 pub use coinbase::CoinbaseClient;
+pub use historical::HistoricalExchange;
 
 use anyhow::Result;
 use async_trait::async_trait;

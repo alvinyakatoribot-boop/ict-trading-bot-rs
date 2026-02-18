@@ -6,6 +6,7 @@ use crate::config::Config;
 pub struct SessionManager {
     pub current_session: String,
     pub session_weight: f64,
+    last_update_time: DateTime<Utc>,
 }
 
 impl SessionManager {
@@ -16,11 +17,13 @@ impl SessionManager {
                 .session_weights
                 .get("off_session")
                 .unwrap_or(&0.5),
+            last_update_time: Utc::now(),
         }
     }
 
     pub fn update(&mut self, cfg: &Config, utc_now: Option<DateTime<Utc>>) {
         let utc_now = utc_now.unwrap_or_else(Utc::now);
+        self.last_update_time = utc_now;
         let et_now = utc_now.with_timezone(&Eastern);
         let current_time = et_now.hour() * 60 + et_now.minute();
 
@@ -68,7 +71,7 @@ impl SessionManager {
     }
 
     pub fn get_day_of_week(&self) -> String {
-        let now_et = Utc::now().with_timezone(&Eastern);
+        let now_et = self.last_update_time.with_timezone(&Eastern);
         now_et.format("%A").to_string()
     }
 

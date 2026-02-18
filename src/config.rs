@@ -31,6 +31,8 @@ pub struct DayRatings {
     pub wednesday: f64,
     pub thursday: f64,
     pub friday: f64,
+    pub saturday: f64,
+    pub sunday: f64,
 }
 
 impl DayRatings {
@@ -41,6 +43,8 @@ impl DayRatings {
             "Wednesday" => self.wednesday,
             "Thursday" => self.thursday,
             "Friday" => self.friday,
+            "Saturday" => self.saturday,
+            "Sunday" => self.sunday,
             _ => 0.0,
         }
     }
@@ -137,8 +141,8 @@ impl Config {
         session_weights.insert("london".to_string(), 1.5);
         session_weights.insert("ny_forex".to_string(), 1.5);
         session_weights.insert("ny_indices".to_string(), 1.3);
-        session_weights.insert("asian".to_string(), 0.8);
-        session_weights.insert("off_session".to_string(), 0.5);
+        session_weights.insert("asian".to_string(), 0.3);
+        session_weights.insert("off_session".to_string(), 0.3);
 
         let mut hft_scales = HashMap::new();
         hft_scales.insert(
@@ -150,8 +154,8 @@ impl Config {
                 structure_tf: Timeframe::M5,
                 confirm_tf: Timeframe::M1,
                 scan_interval: 10,
-                min_confidence: 0.5,
-                weight: 0.7,
+                min_confidence: 0.7,
+                weight: 1.0,
             },
         );
         hft_scales.insert(
@@ -163,8 +167,8 @@ impl Config {
                 structure_tf: Timeframe::M15,
                 confirm_tf: Timeframe::M5,
                 scan_interval: 30,
-                min_confidence: 0.45,
-                weight: 0.85,
+                min_confidence: 0.55,
+                weight: 1.0,
             },
         );
         hft_scales.insert(
@@ -190,6 +194,8 @@ impl Config {
                 wednesday: 5.0,
                 thursday: 4.5,
                 friday: 3.5,
+                saturday: 3.0,
+                sunday: 3.0,
             },
         );
         day_ratings.insert(
@@ -200,6 +206,8 @@ impl Config {
                 wednesday: 3.5,
                 thursday: 5.0,
                 friday: 4.5,
+                saturday: 3.0,
+                sunday: 3.0,
             },
         );
         day_ratings.insert(
@@ -210,6 +218,20 @@ impl Config {
                 wednesday: 2.5,
                 thursday: 4.0,
                 friday: 5.0,
+                saturday: 3.0,
+                sunday: 3.0,
+            },
+        );
+        day_ratings.insert(
+            "undetermined".to_string(),
+            DayRatings {
+                monday: 0.0,
+                tuesday: 3.0,
+                wednesday: 3.5,
+                thursday: 3.5,
+                friday: 3.0,
+                saturday: 3.0,
+                sunday: 3.0,
             },
         );
 
@@ -217,7 +239,7 @@ impl Config {
             exchange: "coinbase".to_string(),
             symbol: "BTC-USD".to_string(),
             coinbase_api_key: env("COINBASE_API_KEY", ""),
-            coinbase_api_secret: env("COINBASE_API_SECRET", ""),
+            coinbase_api_secret: env("COINBASE_API_SECRET", "").replace("\\n", "\n"),
             paper_trade: env("PAPER_TRADE", "true").to_lowercase() == "true",
             initial_balance: env("INITIAL_BALANCE", "200")
                 .parse()

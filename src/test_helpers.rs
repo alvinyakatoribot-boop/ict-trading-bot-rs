@@ -110,8 +110,8 @@ pub fn default_test_config() -> Config {
     session_weights.insert("london".to_string(), 1.5);
     session_weights.insert("ny_forex".to_string(), 1.5);
     session_weights.insert("ny_indices".to_string(), 1.3);
-    session_weights.insert("asian".to_string(), 0.8);
-    session_weights.insert("off_session".to_string(), 0.5);
+    session_weights.insert("asian".to_string(), 0.3);
+    session_weights.insert("off_session".to_string(), 0.3);
 
     let mut hft_scales = HashMap::new();
     hft_scales.insert(
@@ -163,6 +163,8 @@ pub fn default_test_config() -> Config {
             wednesday: 5.0,
             thursday: 4.5,
             friday: 3.5,
+            saturday: 3.0,
+            sunday: 3.0,
         },
     );
     day_ratings.insert(
@@ -173,6 +175,8 @@ pub fn default_test_config() -> Config {
             wednesday: 3.5,
             thursday: 5.0,
             friday: 4.5,
+            saturday: 3.0,
+            sunday: 3.0,
         },
     );
     day_ratings.insert(
@@ -183,6 +187,20 @@ pub fn default_test_config() -> Config {
             wednesday: 2.5,
             thursday: 4.0,
             friday: 5.0,
+            saturday: 3.0,
+            sunday: 3.0,
+        },
+    );
+    day_ratings.insert(
+        "undetermined".to_string(),
+        DayRatings {
+            monday: 0.0,
+            tuesday: 3.0,
+            wednesday: 3.5,
+            thursday: 3.5,
+            friday: 3.0,
+            saturday: 3.0,
+            sunday: 3.0,
         },
     );
 

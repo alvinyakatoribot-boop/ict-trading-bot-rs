@@ -108,6 +108,23 @@ impl PaperTrader {
         trader
     }
 
+    /// Create a fresh trader without loading previous state (for backtesting)
+    pub fn new_fresh(cfg: &Config) -> Self {
+        Self {
+            balance: cfg.initial_balance,
+            positions: Vec::new(),
+            trade_history: Vec::new(),
+            trade_counter: 0,
+            daily_pnl: 0.0,
+            daily_pnl_date: String::new(),
+            kelly: KellyCriterion::new(),
+            last_kelly_result: None,
+            trade_records: HashMap::new(),
+            trades_file: String::new(),
+            records_file: String::new(),
+        }
+    }
+
     pub fn can_open_position(&self, cfg: &Config) -> bool {
         let open_count = self
             .positions
@@ -146,12 +163,16 @@ impl PaperTrader {
                 .get_risk_amount(self.balance, &self.trade_history, Some(scale));
         self.last_kelly_result = Some(kelly_result.clone());
 
-        let mut size_btc = risk_amount / sl_distance;
+        // Hard cap: max 2% of balance risk per trade
+        let max_risk = self.balance * 0.02;
+        let capped_risk = risk_amount.min(max_risk);
+
+        let mut size_btc = capped_risk / sl_distance;
         let mut size_usd = size_btc * signal.entry_price;
 
-        // Hard cap: 95% of balance
-        if size_usd > self.balance * 0.95 {
-            size_usd = self.balance * 0.95;
+        // Hard cap: 50% of balance position size
+        if size_usd > self.balance * 0.50 {
+            size_usd = self.balance * 0.50;
             size_btc = size_usd / signal.entry_price;
         }
 
@@ -239,7 +260,8 @@ impl PaperTrader {
             };
 
             if hit_sl {
-                self.close_position(i, current_price, PositionStatus::ClosedSl);
+                // Exit at stop loss price (simulating stop order fill)
+                self.close_position(i, self.positions[i].stop_loss, PositionStatus::ClosedSl);
                 closed.push(self.positions[i].clone());
                 changed = true;
                 i += 1;

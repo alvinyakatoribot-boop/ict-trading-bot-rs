@@ -87,9 +87,10 @@ impl CoinbaseClient {
             uri,
         };
 
-        // The secret is in the format: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n"
+        // Supports PKCS8 format ("BEGIN PRIVATE KEY") — convert SEC1 keys via:
+        // openssl ec -in key.pem | openssl pkcs8 -topk8 -nocrypt
         let key = EncodingKey::from_ec_pem(self.api_secret.as_bytes())
-            .context("Failed to parse API secret as EC key")?;
+            .context("Failed to parse API secret as EC PEM (must be PKCS8 format)")?;
 
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.api_key.clone());
@@ -186,6 +187,66 @@ impl CoinbaseClient {
         Ok(series)
     }
 
+    /// Fetch candles for a specific time range (for backtesting data loading).
+    pub async fn fetch_ohlcv_range(
+        &mut self,
+        timeframe: Timeframe,
+        start_ts: u64,
+        end_ts: u64,
+    ) -> Result<CandleSeries> {
+        self.rate_limit().await;
+
+        let path = format!(
+            "/api/v3/brokerage/market/products/{}/candles",
+            self.symbol
+        );
+
+        let limit = ((end_ts - start_ts) / timeframe.as_seconds()).min(300);
+        let jwt = self.generate_jwt("GET", &path)?;
+
+        let resp = self
+            .client
+            .get(format!("{}{}", BASE_URL, path))
+            .query(&[
+                ("start", start_ts.to_string()),
+                ("end", end_ts.to_string()),
+                ("granularity", timeframe.coinbase_granularity().to_string()),
+                ("limit", limit.to_string()),
+            ])
+            .header("Authorization", format!("Bearer {}", jwt))
+            .send()
+            .await
+            .context("Failed to fetch candles (range)")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Coinbase API error {}: {}", status, body);
+        }
+
+        let data: CandleResponse = resp.json().await.context("Failed to parse candle response")?;
+
+        let mut candles: Vec<Candle> = data
+            .candles
+            .into_iter()
+            .filter_map(|rc| {
+                let ts = rc.start.parse::<i64>().ok()?;
+                let timestamp = DateTime::from_timestamp(ts, 0)?;
+                Some(Candle {
+                    timestamp,
+                    open: rc.open.parse().ok()?,
+                    high: rc.high.parse().ok()?,
+                    low: rc.low.parse().ok()?,
+                    close: rc.close.parse().ok()?,
+                    volume: rc.volume.parse().ok()?,
+                })
+            })
+            .collect();
+
+        candles.sort_by_key(|c| c.timestamp);
+        Ok(CandleSeries::new(candles))
+    }
+
     pub async fn get_current_price(&mut self) -> Result<f64> {
         self.rate_limit().await;
 
@@ -221,7 +282,7 @@ impl CoinbaseClient {
 
     /// Fetch 4H candles by resampling from 1H
     pub async fn get_4h(&mut self, limit: usize) -> Result<CandleSeries> {
-        let hours_needed = (limit * 4).min(500);
+        let hours_needed = (limit * 4).min(340);
         let h1 = self.fetch_ohlcv(Timeframe::H1, hours_needed).await?;
         Ok(h1.resample(Duration::from_secs(14400)))
     }
