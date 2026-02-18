@@ -85,6 +85,23 @@ impl SessionManager {
     pub fn should_trade_today(&self, cfg: &Config, profile: &str) -> bool {
         self.get_day_rating(cfg, profile) >= cfg.min_day_rating
     }
+
+    /// Check if current time is in the AM Silver Bullet window (10:00-11:00 ET)
+    pub fn is_silver_bullet(&self) -> bool {
+        let et_now = self.last_update_time.with_timezone(&Eastern);
+        let current_min = et_now.hour() * 60 + et_now.minute();
+        // 10:00 AM - 11:00 AM ET
+        current_min >= 600 && current_min < 660
+    }
+
+    /// Get Silver Bullet multiplier (1.0 = no boost, >1.0 = boosted)
+    pub fn silver_bullet_multiplier(&self) -> f64 {
+        if self.is_silver_bullet() {
+            1.15 // 15% confidence boost during Silver Bullet
+        } else {
+            1.0
+        }
+    }
 }
 
 #[cfg(test)]

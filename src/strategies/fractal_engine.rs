@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use crate::config::Config;
 use crate::core::cisd::CisdDetector;
+use crate::core::liquidity::LiquidityDetector;
 use crate::core::pd_arrays::{Pda, PdArrayDetector};
 use crate::core::sessions::SessionManager;
 use crate::core::stddev_projections::StdDevProjector;
@@ -74,6 +75,7 @@ pub struct HftScale {
     cisd_detector: CisdDetector,
     stop_engine: StopLossEngine,
     sd_projector: StdDevProjector,
+    liquidity_detector: LiquidityDetector,
     alignment_analyzers: HashMap<Timeframe, MarketStructure>,
     structure_analyzer: MarketStructure,
 
@@ -102,6 +104,7 @@ impl HftScale {
             cisd_detector: CisdDetector::new(),
             stop_engine: StopLossEngine::new(),
             sd_projector: StdDevProjector::new(),
+            liquidity_detector: LiquidityDetector::new(),
             alignment_analyzers,
             structure_analyzer: MarketStructure::new(),
             last_alignment: Vec::new(),
@@ -392,7 +395,67 @@ impl HftScale {
             tp_label = "DR Low (SD fallback)".to_string();
         }
 
-        let tp_levels: Vec<TpLevelInfo> = sd_proj
+        // ERL liquidity pool targeting — check both entry and structure TF pools
+        let mut pools = self.liquidity_detector.detect_pools(entry_df);
+        // Use structure_analyzer's swing data for HTF liquidity pools
+        let htf_liq = self.structure_analyzer.get_liquidity_levels();
+        // Add HTF swing highs as BSL pools and swing lows as SSL pools
+        for bsl_price in &htf_liq.bsl {
+            // Only add if not already covered by entry TF pools
+            let covered = pools.iter().any(|p| {
+                matches!(p.pool_type, crate::core::liquidity::LiquidityType::BSL)
+                    && (p.price - bsl_price).abs() / bsl_price < 0.001
+            });
+            if !covered {
+                pools.push(crate::core::liquidity::LiquidityPool {
+                    pool_type: crate::core::liquidity::LiquidityType::BSL,
+                    price: *bsl_price,
+                    touches: 1,
+                    first_touch: chrono::Utc::now(),
+                    last_touch: chrono::Utc::now(),
+                    swept: false,
+                    strength: 0.5, // HTF single swing = moderate strength
+                });
+            }
+        }
+        for ssl_price in &htf_liq.ssl {
+            let covered = pools.iter().any(|p| {
+                matches!(p.pool_type, crate::core::liquidity::LiquidityType::SSL)
+                    && (p.price - ssl_price).abs() / ssl_price < 0.001
+            });
+            if !covered {
+                pools.push(crate::core::liquidity::LiquidityPool {
+                    pool_type: crate::core::liquidity::LiquidityType::SSL,
+                    price: *ssl_price,
+                    touches: 1,
+                    first_touch: chrono::Utc::now(),
+                    last_touch: chrono::Utc::now(),
+                    swept: false,
+                    strength: 0.5,
+                });
+            }
+        }
+        if let Some(erl) = self.liquidity_detector.nearest_erl_target(&pools, current, trade_dir) {
+            let erl_dist = (erl.price - current).abs();
+            let sd_dist = (take_profit - current).abs();
+
+            // Use ERL if it's a strong pool (2+ touches) and provides better R:R
+            if erl.touches >= 2 {
+                // If ERL is farther than SD TP, use it (more upside)
+                if erl_dist > sd_dist {
+                    take_profit = erl.price;
+                    tp_label = format!("ERL {}x touches ({:.0})", erl.touches, erl.price);
+                }
+                // If ERL is closer but still meaningful (>60% of SD dist), prefer it
+                // as a more reliable target (liquidity actually rests there)
+                else if erl_dist > sd_dist * 0.6 && erl.strength > 0.5 {
+                    take_profit = erl.price;
+                    tp_label = format!("ERL {}x reliable ({:.0})", erl.touches, erl.price);
+                }
+            }
+        }
+
+        let mut tp_levels: Vec<TpLevelInfo> = sd_proj
             .levels
             .iter()
             .map(|l| TpLevelInfo {
@@ -402,6 +465,22 @@ impl HftScale {
                 level: Some(l.level),
             })
             .collect();
+
+        // If ERL target was used, replace TP4 (-4.5 SD) with the ERL price
+        // so partial exits actually reach the liquidity pool
+        if let Some(erl) = self.liquidity_detector.nearest_erl_target(&pools, current, trade_dir) {
+            if erl.touches >= 2 {
+                let erl_dist = (erl.price - current).abs();
+                // Replace the last TP level if ERL is farther
+                if let Some(tp4) = tp_levels.iter_mut().find(|l| l.level == Some(-4.5)) {
+                    let tp4_dist = (tp4.price - current).abs();
+                    if erl_dist > tp4_dist {
+                        tp4.price = round2(erl.price);
+                        tp4.label = format!("ERL {}x ({:.0})", erl.touches, erl.price);
+                    }
+                }
+            }
+        }
 
         // Protected swing SL
         self.stop_engine
@@ -416,6 +495,9 @@ impl HftScale {
 
         // Confidence
         let mut adjusted = confidence * self.weight * session.session_weight;
+
+        // Silver Bullet boost (10-11 AM ET)
+        adjusted *= session.silver_bullet_multiplier();
 
         let recent = entry_df.tail(30);
         let range_pct = (recent.highs_max() - recent.lows_min()) / current;
