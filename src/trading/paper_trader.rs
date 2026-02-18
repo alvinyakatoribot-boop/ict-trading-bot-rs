@@ -303,6 +303,27 @@ impl PaperTrader {
                 continue;
             }
 
+            // Time-based exit: if position open > MAX_HOLD_MINUTES without any TP hit, close at market
+            let max_hold: i64 = std::env::var("MAX_HOLD_MINUTES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(180); // default 3 hours
+            if max_hold > 0 {
+                let no_tp_hit = self.positions[i].tp_targets.iter().all(|t| !t.hit);
+                if no_tp_hit {
+                    if let Ok(entry_dt) = chrono::DateTime::parse_from_rfc3339(&self.positions[i].entry_time) {
+                        let elapsed = (self.now() - entry_dt.with_timezone(&chrono::Utc)).num_minutes();
+                        if elapsed >= max_hold {
+                            self.close_position(i, current_price, PositionStatus::ClosedSl);
+                            closed.push(self.positions[i].clone());
+                            changed = true;
+                            i += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // Check SL
             let hit_sl = match self.positions[i].direction {
                 Direction::Long => current_price <= self.positions[i].stop_loss,
