@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -38,6 +39,7 @@ pub struct IctBot {
 
     last_scan: HashMap<String, Instant>,
     scale_positions: HashMap<String, u64>,
+    scale_cooldown: HashMap<String, DateTime<Utc>>,
     data_cache: HashMap<Timeframe, CandleSeries>,
 }
 
@@ -101,6 +103,7 @@ impl IctBot {
             weekly_bias: None,
             last_scan,
             scale_positions: HashMap::new(),
+            scale_cooldown: HashMap::new(),
             data_cache: HashMap::new(),
         }
     }
@@ -173,11 +176,15 @@ impl IctBot {
     }
 
     async fn refresh_data(&mut self) {
+        let lookback: usize = std::env::var("DATA_LOOKBACK")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(175);
         let timeframes = [
-            (Timeframe::M1, 200usize),
-            (Timeframe::M5, 200),
-            (Timeframe::M15, 200),
-            (Timeframe::H1, 200),
+            (Timeframe::M1, lookback),
+            (Timeframe::M5, lookback),
+            (Timeframe::M15, lookback),
+            (Timeframe::H1, lookback),
             (Timeframe::D1, 14),
         ];
 
@@ -274,6 +281,11 @@ impl IctBot {
             return;
         }
 
+        // Only trade during killzones (London, NY Forex, NY Indices)
+        if !self.session.is_killzone() {
+            return;
+        }
+
         let profile_str = weekly_bias.profile.to_string();
         if !self.session.should_trade_today(cfg, &profile_str) {
             return;
@@ -281,6 +293,14 @@ impl IctBot {
 
         if self.scale_positions.contains_key(scale_key) {
             return;
+        }
+
+        // Cooldown after position close to prevent churning
+        if let Some(&cooldown_until) = self.scale_cooldown.get(scale_key) {
+            if Utc::now() < cooldown_until {
+                return;
+            }
+            self.scale_cooldown.remove(&scale_key.to_string());
         }
 
         if !self.paper_trader.can_open_position(cfg) {
@@ -425,13 +445,13 @@ impl IctBot {
     }
 
     async fn check_positions(&mut self, _cfg: &Config) {
-        let open_pos: Vec<(usize, Direction, f64)> = self
+        let open_pos: Vec<(usize, Direction, f64, String)> = self
             .paper_trader
             .positions
             .iter()
             .enumerate()
             .filter(|(_, p)| p.status == PositionStatus::Open)
-            .map(|(i, p)| (i, p.direction, p.stop_loss))
+            .map(|(i, p)| (i, p.direction, p.stop_loss, p.scale.clone()))
             .collect();
 
         if open_pos.is_empty() {
@@ -446,14 +466,29 @@ impl IctBot {
             }
         };
 
-        // Trail stops
-        for &(_, direction, stop_loss) in &open_pos {
-            if let Some(trail_df) = self.data_cache.get(&Timeframe::M5) {
+        // Trail stops using scale-matched timeframe
+        let trail_tf_env = std::env::var("TRAIL_TF").unwrap_or_default();
+        for &(_, direction, stop_loss, ref scale) in &open_pos {
+            let trail_tf = if !trail_tf_env.is_empty() {
+                match trail_tf_env.as_str() {
+                    "1m" => Timeframe::M1,
+                    "5m" => Timeframe::M5,
+                    "15m" => Timeframe::M15,
+                    _ => Timeframe::M5,
+                }
+            } else {
+                match scale.as_str() {
+                    "1m" => Timeframe::M1,
+                    "5m" => Timeframe::M5,
+                    "15m" => Timeframe::M15,
+                    _ => Timeframe::M5,
+                }
+            };
+            if let Some(trail_df) = self.data_cache.get(&trail_tf) {
                 let mut trail_engine = StopLossEngine::new();
                 if let Some(new_sl) =
                     trail_engine.get_trailing_stop(direction, stop_loss, trail_df, None)
                 {
-                    // Find the position and update
                     for pos in &mut self.paper_trader.positions {
                         if pos.status == PositionStatus::Open
                             && pos.direction == direction
@@ -506,15 +541,23 @@ impl IctBot {
                 pos.exit_price.unwrap_or(0.0),
             );
 
-            // Remove from scale_positions
+            // Remove from scale_positions and set cooldown
             let keys_to_remove: Vec<String> = self
                 .scale_positions
                 .iter()
                 .filter(|(_, &pid)| pid == pos.id)
                 .map(|(k, _)| k.clone())
                 .collect();
+            let cooldown_mins: i64 = std::env::var("COOLDOWN_MINUTES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(15);
             for key in keys_to_remove {
                 self.scale_positions.remove(&key);
+                self.scale_cooldown.insert(
+                    key,
+                    Utc::now() + chrono::Duration::minutes(cooldown_mins),
+                );
             }
         }
     }
