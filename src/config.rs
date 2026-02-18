@@ -180,7 +180,7 @@ impl Config {
                 structure_tf: Timeframe::H1,
                 confirm_tf: Timeframe::M15,
                 scan_interval: 60,
-                min_confidence: 0.4,
+                min_confidence: 0.7,
                 weight: 1.0,
             },
         );

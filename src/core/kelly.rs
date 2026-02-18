@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const MIN_SAMPLE_SIZE: usize = 20;
-const DEFAULT_FRACTION: f64 = 0.005;
+const DEFAULT_FRACTION: f64 = 0.02;
 const KELLY_MULTIPLIER: f64 = 0.5;
 const MAX_KELLY_FRACTION: f64 = 0.06;
 const MIN_KELLY_FRACTION: f64 = 0.002;

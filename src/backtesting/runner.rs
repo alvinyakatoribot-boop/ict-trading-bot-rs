@@ -95,6 +95,7 @@ impl BacktestRunner {
 
         while current <= end {
             self.exchange.set_time(current);
+            self.paper_trader.sim_time = Some(current);
             step_count += 1;
 
             // Progress logging

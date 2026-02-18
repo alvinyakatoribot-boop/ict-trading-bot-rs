@@ -87,6 +87,8 @@ pub struct PaperTrader {
     pub trade_records: HashMap<u64, TradeRecord>,
     trades_file: String,
     records_file: String,
+    /// When set, used instead of Utc::now() for timestamps (backtesting)
+    pub sim_time: Option<DateTime<Utc>>,
 }
 
 impl PaperTrader {
@@ -103,6 +105,7 @@ impl PaperTrader {
             trade_records: HashMap::new(),
             trades_file: format!("{}/paper_trades.json", cfg.log_dir),
             records_file: format!("{}/trade_records.json", cfg.log_dir),
+            sim_time: None,
         };
         trader.load_state(cfg);
         trader
@@ -122,7 +125,13 @@ impl PaperTrader {
             trade_records: HashMap::new(),
             trades_file: String::new(),
             records_file: String::new(),
+            sim_time: None,
         }
+    }
+
+    /// Get the current time (sim_time for backtesting, Utc::now() for live)
+    fn now(&self) -> DateTime<Utc> {
+        self.sim_time.unwrap_or_else(Utc::now)
     }
 
     pub fn can_open_position(&self, cfg: &Config) -> bool {
@@ -135,7 +144,7 @@ impl PaperTrader {
             return false;
         }
 
-        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let today = self.now().format("%Y-%m-%d").to_string();
         // Note: daily_pnl is checked against current state
         if self.daily_pnl_date == today
             && self.daily_pnl <= -(cfg.max_daily_loss * self.balance)
@@ -163,16 +172,25 @@ impl PaperTrader {
                 .get_risk_amount(self.balance, &self.trade_history, Some(scale));
         self.last_kelly_result = Some(kelly_result.clone());
 
-        // Hard cap: max 2% of balance risk per trade
-        let max_risk = self.balance * 0.02;
+        // Hard cap: max risk per trade (configurable via MAX_RISK_PCT env)
+        let risk_pct: f64 = std::env::var("MAX_RISK_PCT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.02);
+        let max_risk = self.balance * risk_pct;
         let capped_risk = risk_amount.min(max_risk);
 
         let mut size_btc = capped_risk / sl_distance;
         let mut size_usd = size_btc * signal.entry_price;
 
-        // Hard cap: 50% of balance position size
-        if size_usd > self.balance * 0.50 {
-            size_usd = self.balance * 0.50;
+        // Leverage cap (configurable via MAX_LEVERAGE env, default 5x)
+        let max_leverage: f64 = std::env::var("MAX_LEVERAGE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5.0);
+        let max_position_usd = self.balance * max_leverage;
+        if size_usd > max_position_usd {
+            size_usd = max_position_usd;
             size_btc = size_usd / signal.entry_price;
         }
 
@@ -209,7 +227,7 @@ impl PaperTrader {
             size_btc: round8(size_btc),
             stop_loss: signal.stop_loss,
             take_profit: signal.take_profit,
-            entry_time: Utc::now().to_rfc3339(),
+            entry_time: self.now().to_rfc3339(),
             reason: signal.reason.clone(),
             kelly_fraction: kelly_result.applied_fraction,
             status: PositionStatus::Open,
@@ -326,6 +344,7 @@ impl PaperTrader {
     }
 
     fn partial_close(&mut self, pos_idx: usize, target_idx: usize, exit_price: f64) {
+        let now_str = self.now().to_rfc3339();
         let pos = &mut self.positions[pos_idx];
         let close_size = pos.tp_targets[target_idx]
             .size_btc
@@ -351,15 +370,16 @@ impl PaperTrader {
             price: exit_price,
             size_btc: close_size,
             pnl,
-            time: Utc::now().to_rfc3339(),
+            time: now_str,
             logged: false,
         });
     }
 
     fn finalize_position(&mut self, pos_idx: usize, status: PositionStatus) {
+        let now_str = self.now().to_rfc3339();
         let pos = &mut self.positions[pos_idx];
         pos.exit_price = pos.partial_exits.last().map(|pe| pe.price);
-        pos.exit_time = Some(Utc::now().to_rfc3339());
+        pos.exit_time = Some(now_str);
         pos.status = status;
 
         let closed_pos = pos.clone();
@@ -369,6 +389,7 @@ impl PaperTrader {
     }
 
     fn close_position(&mut self, pos_idx: usize, exit_price: f64, status: PositionStatus) {
+        let now_str = self.now().to_rfc3339();
         let pos = &mut self.positions[pos_idx];
         let close_size = if pos.remaining_size_btc > 0.0 {
             pos.remaining_size_btc
@@ -382,7 +403,7 @@ impl PaperTrader {
         };
 
         pos.exit_price = Some(exit_price);
-        pos.exit_time = Some(Utc::now().to_rfc3339());
+        pos.exit_time = Some(now_str);
         pos.status = status;
         pos.pnl = round2(pos.pnl + pnl);
         pos.remaining_size_btc = 0.0;
