@@ -324,6 +324,30 @@ impl PaperTrader {
                 }
             }
 
+            // Post-TP stall exit: if some TPs hit but remaining stall, close remainder
+            let post_tp_stall: i64 = std::env::var("POST_TP_STALL_MINUTES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(120); // default 2 hours after last TP hit
+            if post_tp_stall > 0 {
+                let tps_hit = self.positions[i].tp_targets.iter().filter(|t| t.hit).count();
+                let total_tps = self.positions[i].tp_targets.len();
+                if tps_hit > 0 && tps_hit < total_tps {
+                    if let Some(last_exit) = self.positions[i].partial_exits.last() {
+                        if let Ok(last_tp_dt) = chrono::DateTime::parse_from_rfc3339(&last_exit.time) {
+                            let since_last_tp = (self.now() - last_tp_dt.with_timezone(&chrono::Utc)).num_minutes();
+                            if since_last_tp >= post_tp_stall {
+                                self.close_position(i, current_price, PositionStatus::ClosedTp);
+                                closed.push(self.positions[i].clone());
+                                changed = true;
+                                i += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Check SL
             let hit_sl = match self.positions[i].direction {
                 Direction::Long => current_price <= self.positions[i].stop_loss,
